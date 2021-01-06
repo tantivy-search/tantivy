@@ -3,6 +3,23 @@ use serde::{Deserialize, Serialize};
 /// The tokenizer module contains all of the tools used to process
 /// text in `tantivy`.
 
+pub trait TextAnalyzerClone {
+    fn box_clone(&self) -> Box<dyn TextAnalyzerT>;
+}
+
+/// 'Top-level' trait hiding concrete types, below which static dispatch occurs.
+pub trait TextAnalyzerT: 'static + Send + Sync + TextAnalyzerClone {
+    /// 'Top-level' dynamic dispatch function hiding concrete types of the staticly
+    /// dispatched `token_stream` from the `Tokenizer` trait.
+    fn token_stream(&self, text: &str) -> Box<dyn Iterator<Item = Token>>;
+}
+
+impl Clone for Box<dyn TextAnalyzerT> {
+    fn clone(&self) -> Self {
+        (**self).box_clone()
+    }
+}
+
 /// Token
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Token {
@@ -33,38 +50,116 @@ impl Default for Token {
     }
 }
 
-/// `TextAnalyzer` tokenizes an input text into tokens and modifies the resulting `TokenStream`.
+/// Trait for the pluggable components of `Tokenizer`s.
+pub trait TokenFilter: 'static + Send + Sync + Clone {
+    /// Take a `Token` and transform it or return `None` if it's to be removed
+    /// from the output stream.
+    fn transform(&mut self, token: Token) -> Option<Token>;
+}
+
+/// `Tokenizer` are in charge of splitting text into a stream of token
+/// before indexing.
+///
+/// See the [module documentation](./index.html) for more detail.
+pub trait Tokenizer: 'static + Send + Sync + Clone {
+    /// An iteratable type is returned.
+    type Iter: Iterator<Item = Token>;
+    /// Creates a token stream for a given `str`.
+    fn token_stream(&self, text: &str) -> Self::Iter;
+    /// Tokenize an array`&str`
+    ///
+    /// The resulting `Token` stream is equivalent to what would be obtained if the &str were
+    /// one concatenated `&str`, with an artificial position gap of `2` between the different fields
+    /// to prevent accidental `PhraseQuery` to match accross two terms.
+    fn token_stream_texts<'a>(&'a self, texts: &'a [&str]) -> Box<dyn Iterator<Item = Token> + 'a> {
+        let streams_with_offsets = texts.iter().scan(0, move |total_offset, &text| {
+            let temp = *total_offset;
+            *total_offset += text.len();
+            Some((self.token_stream(text), temp))
+        });
+        Box::new(TokenStreamChain::new(streams_with_offsets))
+    }
+}
+
+/// `TextAnalyzer` wraps the tokenization of an input text and its modification by any filters applied onto it.
 ///
 /// It simply wraps a `Tokenizer` and a list of `TokenFilter` that are applied sequentially.
-pub struct TextAnalyzer {
-    tokenizer: Box<dyn Tokenizer>,
-    token_filters: Vec<Box<dyn TokenFilter>>,
-}
+#[derive(Clone, Debug, Default)]
+pub struct TextAnalyzer<T>(T);
 
-impl<T: Tokenizer> From<T> for TextAnalyzer {
-    fn from(tokenizer: T) -> Self {
-        TextAnalyzer::new(tokenizer, Vec::new())
+impl<T: Tokenizer> From<T> for TextAnalyzer<T> {
+    fn from(src: T) -> TextAnalyzer<T> {
+        TextAnalyzer(src)
     }
 }
 
-impl TextAnalyzer {
-    /// Creates a new `TextAnalyzer` given a tokenizer and a vector of `Box<dyn TokenFilter>`.
-    ///
-    /// When creating a `TextAnalyzer` from a `Tokenizer` alone, prefer using
-    /// `TextAnalyzer::from(tokenizer)`.
-    pub fn new<T: Tokenizer>(
-        tokenizer: T,
-        token_filters: Vec<Box<dyn TokenFilter>>,
-    ) -> TextAnalyzer {
-        TextAnalyzer {
-            tokenizer: Box::new(tokenizer),
-            token_filters,
+impl<T: Tokenizer> TextAnalyzerClone for TextAnalyzer<T> {
+    fn box_clone(&self) -> Box<dyn TextAnalyzerT> {
+        Box::new(TextAnalyzer(self.0.clone()))
+    }
+}
+
+impl<T: Tokenizer> TextAnalyzerT for TextAnalyzer<T> {
+    fn token_stream(&self, text: &str) -> Box<dyn Iterator<Item = Token>> {
+        Box::new(self.0.token_stream(text))
+    }
+}
+
+/// Identity `TokenFilter`
+#[derive(Clone, Debug, Default)]
+pub struct Identity;
+
+impl TokenFilter for Identity {
+    fn transform(&mut self, token: Token) -> Option<Token> {
+        Some(token)
+    }
+}
+
+/// `Filter` is a wrapper around a `Token` stream and a `TokenFilter` which modifies it.
+#[derive(Clone, Default, Debug)]
+pub struct Filter<I, F> {
+    iter: I,
+    f: F,
+}
+
+impl<I, F> Iterator for Filter<I, F>
+where
+    I: Iterator<Item = Token>,
+    F: TokenFilter,
+{
+    type Item = Token;
+    fn next(&mut self) -> Option<Token> {
+        while let Some(token) = self.iter.next() {
+            if let Some(tok) = self.f.transform(token) {
+                return Some(tok);
+            }
         }
+        None
     }
+}
 
+#[derive(Clone, Debug, Default)]
+pub struct AnalyzerBuilder<T, F> {
+    tokenizer: T,
+    f: F,
+}
+
+/// Construct an `AnalyzerBuilder` on which to apply `TokenFilter`.
+pub fn analyzer_builder<T: Tokenizer>(tokenizer: T) -> AnalyzerBuilder<T, Identity> {
+    AnalyzerBuilder {
+        tokenizer,
+        f: Identity,
+    }
+}
+
+impl<T, F> AnalyzerBuilder<T, F>
+where
+    T: Tokenizer,
+    F: TokenFilter,
+{
     /// Appends a token filter to the current tokenizer.
     ///
-    /// The method consumes the current `TokenStream` and returns a
+    /// The method consumes the current `Token` and returns a
     /// new one.
     ///
     /// # Example
@@ -72,176 +167,35 @@ impl TextAnalyzer {
     /// ```rust
     /// use tantivy::tokenizer::*;
     ///
-    /// let en_stem = TextAnalyzer::from(SimpleTokenizer)
+    /// let en_stem = analyzer_builder(SimpleTokenizer)
     ///     .filter(RemoveLongFilter::limit(40))
-    ///     .filter(LowerCaser)
-    ///     .filter(Stemmer::default());
+    ///     .filter(LowerCaser::new())
+    ///     .filter(Stemmer::default()).build();
     /// ```
     ///
-    pub fn filter<F: TokenFilter>(mut self, token_filter: F) -> Self {
-        self.token_filters.push(Box::new(token_filter));
-        self
+    pub fn filter<G: TokenFilter>(self, f: G) -> AnalyzerBuilder<AnalyzerBuilder<T, F>, G> {
+        AnalyzerBuilder { tokenizer: self, f }
     }
+    /// Finalize the build process.
+    pub fn build(self) -> TextAnalyzer<AnalyzerBuilder<T, F>> {
+        TextAnalyzer(self)
+    }
+}
 
-    /// Tokenize an array`&str`
-    ///
-    /// The resulting `BoxTokenStream` is equivalent to what would be obtained if the &str were
-    /// one concatenated `&str`, with an artificial position gap of `2` between the different fields
-    /// to prevent accidental `PhraseQuery` to match accross two terms.
-    pub fn token_stream_texts<'a>(&self, texts: &'a [&str]) -> Box<dyn TokenStream + 'a> {
-        debug_assert!(!texts.is_empty());
-        let mut streams_with_offsets = vec![];
-        let mut total_offset = 0;
-        for &text in texts {
-            streams_with_offsets.push((self.token_stream(text), total_offset));
-            total_offset += text.len();
+impl<T: Tokenizer, F: TokenFilter> Tokenizer for AnalyzerBuilder<T, F> {
+    type Iter = Filter<T::Iter, F>;
+    fn token_stream(&self, text: &str) -> Self::Iter {
+        Filter {
+            iter: self.tokenizer.token_stream(text),
+            f: self.f.clone(),
         }
-        Box::new(TokenStreamChain::new(streams_with_offsets))
-    }
-
-    /// Creates a token stream for a given `str`.
-    pub fn token_stream<'a>(&self, text: &'a str) -> Box<dyn TokenStream + 'a> {
-        let mut token_stream = self.tokenizer.token_stream(text);
-        for token_filter in &self.token_filters {
-            token_stream = token_filter.transform(token_stream);
-        }
-        token_stream
-    }
-}
-
-impl Clone for TextAnalyzer {
-    fn clone(&self) -> Self {
-        TextAnalyzer {
-            tokenizer: self.tokenizer.box_clone(),
-            token_filters: self
-                .token_filters
-                .iter()
-                .map(|token_filter| token_filter.box_clone())
-                .collect(),
-        }
-    }
-}
-
-/// `Tokenizer` are in charge of splitting text into a stream of token
-/// before indexing.
-///
-/// See the [module documentation](./index.html) for more detail.
-///
-/// # Warning
-///
-/// This API may change to use associated types.
-pub trait Tokenizer: 'static + Send + Sync + TokenizerClone {
-    /// Creates a token stream for a given `str`.
-    fn token_stream<'a>(&self, text: &'a str) -> Box<dyn TokenStream + 'a>;
-}
-
-pub trait TokenizerClone {
-    fn box_clone(&self) -> Box<dyn Tokenizer>;
-}
-
-impl<T: Tokenizer + Clone> TokenizerClone for T {
-    fn box_clone(&self) -> Box<dyn Tokenizer> {
-        Box::new(self.clone())
-    }
-}
-
-/// `TokenStream` is the result of the tokenization.
-///
-/// It consists consumable stream of `Token`s.
-///
-/// # Example
-///
-/// ```
-/// use tantivy::tokenizer::*;
-///
-/// let tokenizer = TextAnalyzer::from(SimpleTokenizer)
-///        .filter(RemoveLongFilter::limit(40))
-///        .filter(LowerCaser);
-/// let mut token_stream = tokenizer.token_stream("Hello, happy tax payer");
-/// {
-///     let token = token_stream.next().unwrap();
-///     assert_eq!(&token.text, "hello");
-///     assert_eq!(token.offset_from, 0);
-///     assert_eq!(token.offset_to, 5);
-///     assert_eq!(token.position, 0);
-/// }
-/// {
-///     let token = token_stream.next().unwrap();
-///     assert_eq!(&token.text, "happy");
-///     assert_eq!(token.offset_from, 7);
-///     assert_eq!(token.offset_to, 12);
-///     assert_eq!(token.position, 1);
-/// }
-/// ```
-///
-pub trait TokenStream {
-    /// Advance to the next token
-    ///
-    /// Returns false if there are no other tokens.
-    fn advance(&mut self) -> bool;
-
-    /// Returns a reference to the current token.
-    fn token(&self) -> &Token;
-
-    /// Returns a mutable reference to the current token.
-    fn token_mut(&mut self) -> &mut Token;
-
-    /// Helper to iterate over tokens. It
-    /// simply combines a call to `.advance()`
-    /// and `.token()`.
-    ///
-    /// ```
-    /// use tantivy::tokenizer::*;
-    ///
-    /// let tokenizer = TextAnalyzer::from(SimpleTokenizer)
-    ///       .filter(RemoveLongFilter::limit(40))
-    ///       .filter(LowerCaser);
-    /// let mut token_stream = tokenizer.token_stream("Hello, happy tax payer");
-    /// while let Some(token) = token_stream.next() {
-    ///     println!("Token {:?}", token.text);
-    /// }
-    /// ```
-    fn next(&mut self) -> Option<&Token> {
-        if self.advance() {
-            Some(self.token())
-        } else {
-            None
-        }
-    }
-
-    /// Helper function to consume the entire `TokenStream`
-    /// and push the tokens to a sink function.
-    ///
-    /// Remove this.
-    fn process(&mut self, sink: &mut dyn FnMut(&Token)) -> u32 {
-        let mut num_tokens_pushed = 0u32;
-        while self.advance() {
-            sink(self.token());
-            num_tokens_pushed += 1u32;
-        }
-        num_tokens_pushed
-    }
-}
-
-pub trait TokenFilterClone {
-    fn box_clone(&self) -> Box<dyn TokenFilter>;
-}
-
-/// Trait for the pluggable components of `Tokenizer`s.
-pub trait TokenFilter: 'static + Send + Sync + TokenFilterClone {
-    /// Wraps a token stream and returns the modified one.
-    fn transform<'a>(&self, token_stream: Box<dyn TokenStream + 'a>) -> Box<dyn TokenStream + 'a>;
-}
-
-impl<T: TokenFilter + Clone> TokenFilterClone for T {
-    fn box_clone(&self) -> Box<dyn TokenFilter> {
-        Box::new(self.clone())
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::Token;
+    use super::*;
+    use crate::tokenizer::SimpleTokenizer;
 
     #[test]
     fn clone() {
@@ -258,5 +212,16 @@ mod test {
         assert_eq!(t1.offset_from, t2.offset_from);
         assert_eq!(t1.offset_to, t2.offset_to);
         assert_eq!(t1.text, t2.text);
+    }
+
+    #[test]
+    fn text_analyzer() {
+        let mut stream = SimpleTokenizer.token_stream("tokenizer hello world");
+        dbg!(stream.next());
+        dbg!(stream.next());
+        dbg!(stream.next());
+        dbg!(stream.next());
+        dbg!(stream.next());
+        dbg!(stream.next());
     }
 }

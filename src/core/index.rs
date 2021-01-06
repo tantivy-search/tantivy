@@ -20,7 +20,7 @@ use crate::reader::IndexReaderBuilder;
 use crate::schema::Field;
 use crate::schema::FieldType;
 use crate::schema::Schema;
-use crate::tokenizer::{TextAnalyzer, TokenizerManager};
+use crate::tokenizer::{TextAnalyzerT, TokenizerManager};
 use crate::IndexWriter;
 use std::collections::HashSet;
 use std::fmt;
@@ -119,13 +119,12 @@ impl Index {
             return Index::create(dir, schema);
         }
         let index = Index::open(dir)?;
-        if index.schema() == schema {
-            Ok(index)
-        } else {
-            Err(TantivyError::SchemaError(
+        if index.schema() != schema {
+            return Err(TantivyError::SchemaError(
                 "An index exists but the schema does not match.".to_string(),
-            ))
+            ));
         }
+        Ok(index)
     }
 
     /// Creates a new index in a temp directory.
@@ -181,11 +180,11 @@ impl Index {
     }
 
     /// Helper to access the tokenizer associated to a specific field.
-    pub fn tokenizer_for_field(&self, field: Field) -> crate::Result<TextAnalyzer> {
+    pub fn tokenizer_for_field(&self, field: Field) -> crate::Result<Box<dyn TextAnalyzerT>> {
         let field_entry = self.schema.get_field_entry(field);
         let field_type = field_entry.field_type();
         let tokenizer_manager: &TokenizerManager = self.tokenizers();
-        let tokenizer_name_opt: Option<TextAnalyzer> = match field_type {
+        let tokenizer_name_opt: Option<Box<dyn TextAnalyzerT>> = match field_type {
             FieldType::Str(text_options) => text_options
                 .get_indexing_options()
                 .map(|text_indexing_options| text_indexing_options.tokenizer().to_string())

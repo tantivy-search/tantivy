@@ -1,45 +1,31 @@
-use super::{Token, TokenFilter, TokenStream};
+use super::{Token, TokenFilter};
 use std::mem;
 
 /// This class converts alphabetic, numeric, and symbolic Unicode characters
 /// which are not in the first 127 ASCII characters (the "Basic Latin" Unicode
 /// block) into their ASCII equivalents, if one exists.
-#[derive(Clone)]
-pub struct AsciiFoldingFilter;
-
-impl TokenFilter for AsciiFoldingFilter {
-    fn transform<'a>(&self, token_stream: Box<dyn TokenStream + 'a>) -> Box<dyn TokenStream + 'a> {
-        Box::new(AsciiFoldingFilterTokenStream {
-            tail: token_stream,
-            buffer: String::with_capacity(100),
-        })
-    }
-}
-
-pub struct AsciiFoldingFilterTokenStream<'a> {
+#[derive(Clone, Debug, Default)]
+pub struct AsciiFolding {
     buffer: String,
-    tail: Box<dyn TokenStream + 'a>,
 }
 
-impl<'a> TokenStream for AsciiFoldingFilterTokenStream<'a> {
-    fn advance(&mut self) -> bool {
-        if !self.tail.advance() {
-            return false;
+impl AsciiFolding {
+    /// Construct a new `AsciiFolding` filter.
+    pub fn new() -> Self {
+        Self {
+            buffer: String::with_capacity(100),
         }
-        if !self.token_mut().text.is_ascii() {
+    }
+}
+
+impl TokenFilter for AsciiFolding {
+    fn transform(&mut self, mut token: Token) -> Option<Token> {
+        if !token.text.is_ascii() {
             // ignore its already ascii
-            to_ascii(&mut self.tail.token_mut().text, &mut self.buffer);
-            mem::swap(&mut self.tail.token_mut().text, &mut self.buffer);
+            to_ascii(&token.text, &mut self.buffer);
+            mem::swap(&mut token.text, &mut self.buffer);
         }
-        true
-    }
-
-    fn token(&self) -> &Token {
-        self.tail.token()
-    }
-
-    fn token_mut(&mut self) -> &mut Token {
-        self.tail.token_mut()
+        Some(token)
     }
 }
 
@@ -1526,7 +1512,7 @@ fn fold_non_ascii_char(c: char) -> Option<&'static str> {
 }
 
 // https://github.com/apache/lucene-solr/blob/master/lucene/analysis/common/src/java/org/apache/lucene/analysis/miscellaneous/ASCIIFoldingFilter.java#L187
-fn to_ascii(text: &mut String, output: &mut String) {
+fn to_ascii(text: &String, output: &mut String) {
     output.clear();
 
     for c in text.chars() {
@@ -1540,11 +1526,8 @@ fn to_ascii(text: &mut String, output: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::to_ascii;
-    use crate::tokenizer::AsciiFoldingFilter;
-    use crate::tokenizer::RawTokenizer;
-    use crate::tokenizer::SimpleTokenizer;
-    use crate::tokenizer::TextAnalyzer;
+    use super::super::*;
+    use super::*;
     use std::iter;
 
     #[test]
@@ -1560,22 +1543,22 @@ mod tests {
     }
 
     fn folding_helper(text: &str) -> Vec<String> {
-        let mut tokens = Vec::new();
-        TextAnalyzer::from(SimpleTokenizer)
-            .filter(AsciiFoldingFilter)
+        let tokens = analyzer_builder(SimpleTokenizer)
+            .filter(AsciiFolding::new())
+            .build()
             .token_stream(text)
-            .process(&mut |token| {
-                tokens.push(token.text.clone());
-            });
+            .map(|token| token.text.clone())
+            .collect();
         tokens
     }
 
     fn folding_using_raw_tokenizer_helper(text: &str) -> String {
-        let mut token_stream = TextAnalyzer::from(RawTokenizer)
-            .filter(AsciiFoldingFilter)
+        let mut token_stream = analyzer_builder(RawTokenizer)
+            .filter(AsciiFolding::new())
+            .build()
             .token_stream(text);
-        token_stream.advance();
-        token_stream.token().text.clone()
+        let Token { text, .. } = token_stream.next().unwrap();
+        text
     }
 
     #[test]
@@ -1626,9 +1609,9 @@ mod tests {
 
     #[test]
     fn test_to_ascii() {
-        let mut input = "Rámon".to_string();
+        let input = "Rámon".to_string();
         let mut buffer = String::new();
-        to_ascii(&mut input, &mut buffer);
+        to_ascii(&input, &mut buffer);
         assert_eq!("Ramon", buffer);
     }
 

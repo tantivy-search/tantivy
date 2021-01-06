@@ -2,16 +2,16 @@
 //! ```rust
 //! use tantivy::tokenizer::*;
 //!
-//! let tokenizer = TextAnalyzer::from(RawTokenizer)
-//!   .filter(AlphaNumOnlyFilter);
+//! let tokenizer = analyzer_builder(RawTokenizer)
+//!   .filter(AlphaNumOnlyFilter).build();
 //!
 //! let mut stream = tokenizer.token_stream("hello there");
 //! // is none because the raw filter emits one token that
 //! // contains a space
 //! assert!(stream.next().is_none());
 //!
-//! let tokenizer = TextAnalyzer::from(SimpleTokenizer)
-//!   .filter(AlphaNumOnlyFilter);
+//! let tokenizer = analyzer_builder(SimpleTokenizer)
+//!   .filter(AlphaNumOnlyFilter).build();
 //!
 //! let mut stream = tokenizer.token_stream("hello there 💣");
 //! assert!(stream.next().is_some());
@@ -19,45 +19,18 @@
 //! // the "emoji" is dropped because its not an alphanum
 //! assert!(stream.next().is_none());
 //! ```
-use super::{Token, TokenFilter, TokenStream};
+use super::{Token, TokenFilter};
 
 /// `TokenFilter` that removes all tokens that contain non
 /// ascii alphanumeric characters.
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct AlphaNumOnlyFilter;
 
-pub struct AlphaNumOnlyFilterStream<'a> {
-    tail: Box<dyn TokenStream + 'a>,
-}
-
-impl<'a> AlphaNumOnlyFilterStream<'a> {
-    fn predicate(&self, token: &Token) -> bool {
-        token.text.chars().all(|c| c.is_ascii_alphanumeric())
-    }
-}
-
 impl TokenFilter for AlphaNumOnlyFilter {
-    fn transform<'a>(&self, token_stream: Box<dyn TokenStream + 'a>) -> Box<dyn TokenStream + 'a> {
-        Box::new(AlphaNumOnlyFilterStream { tail: token_stream })
-    }
-}
-
-impl<'a> TokenStream for AlphaNumOnlyFilterStream<'a> {
-    fn advance(&mut self) -> bool {
-        while self.tail.advance() {
-            if self.predicate(self.tail.token()) {
-                return true;
-            }
+    fn transform(&mut self, token: Token) -> Option<Token> {
+        if token.text.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Some(token);
         }
-
-        false
-    }
-
-    fn token(&self) -> &Token {
-        self.tail.token()
-    }
-
-    fn token_mut(&mut self) -> &mut Token {
-        self.tail.token_mut()
+        None
     }
 }

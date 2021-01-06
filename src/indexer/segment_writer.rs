@@ -10,11 +10,9 @@ use crate::schema::FieldType;
 use crate::schema::Schema;
 use crate::schema::Term;
 use crate::schema::Value;
-use crate::schema::{Field, FieldEntry};
 use crate::tokenizer::PreTokenizedStream;
-use crate::tokenizer::TokenStream;
-use crate::tokenizer::{FacetTokenizer, TextAnalyzer};
-use crate::tokenizer::{TokenStreamChain, Tokenizer};
+use crate::tokenizer::{DynTokenStreamChain, Tokenizer};
+use crate::tokenizer::{FacetTokenizer, TextAnalyzerT, Token};
 use crate::Opstamp;
 use crate::{DocId, SegmentComponent};
 
@@ -24,7 +22,7 @@ use crate::{DocId, SegmentComponent};
 fn initial_table_size(per_thread_memory_budget: usize) -> crate::Result<usize> {
     let table_memory_upper_bound = per_thread_memory_budget / 3;
     if let Some(limit) = (10..)
-        .take_while(|num_bits: &usize| compute_table_size(*num_bits) < table_memory_upper_bound)
+        .take_while(|&num_bits| compute_table_size(num_bits) < table_memory_upper_bound)
         .last()
     {
         Ok(limit.min(19)) // we cap it at 2^19 = 512K.
@@ -46,7 +44,8 @@ pub struct SegmentWriter {
     fast_field_writers: FastFieldsWriter,
     fieldnorms_writer: FieldNormsWriter,
     doc_opstamps: Vec<Opstamp>,
-    tokenizers: Vec<Option<TextAnalyzer>>,
+    // TODO: change type
+    tokenizers: Vec<Option<Box<dyn TextAnalyzerT>>>,
     term_buffer: Term,
 }
 
@@ -71,17 +70,17 @@ impl SegmentWriter {
         let multifield_postings = MultiFieldPostingsWriter::new(schema, table_num_bits);
         let tokenizers = schema
             .fields()
-            .map(
-                |(_, field_entry): (Field, &FieldEntry)| match field_entry.field_type() {
-                    FieldType::Str(ref text_options) => text_options
+            .map(|(_, field_entry)| match field_entry.field_type() {
+                FieldType::Str(text_options) => {
+                    text_options
                         .get_indexing_options()
                         .and_then(|text_index_option| {
                             let tokenizer_name = &text_index_option.tokenizer();
                             tokenizer_manager.get(tokenizer_name)
-                        }),
-                    _ => None,
-                },
-            )
+                        })
+                }
+                _ => None,
+            })
             .collect();
         Ok(SegmentWriter {
             max_doc: 0,
@@ -158,12 +157,13 @@ impl SegmentWriter {
                         let mut unordered_term_id_opt = None;
                         FacetTokenizer
                             .token_stream(facet_str)
-                            .process(&mut |token| {
+                            .map(|token| {
                                 term_buffer.set_text(&token.text);
                                 let unordered_term_id =
                                     multifield_postings.subscribe(doc_id, &term_buffer);
                                 unordered_term_id_opt = Some(unordered_term_id);
-                            });
+                            })
+                            .count();
                         if let Some(unordered_term_id) = unordered_term_id_opt {
                             self.fast_field_writers
                                 .get_multivalue_writer(field)
@@ -181,14 +181,14 @@ impl SegmentWriter {
                             Value::PreTokStr(tok_str) => {
                                 streams_with_offsets.push((
                                     Box::new(PreTokenizedStream::from(tok_str.clone()))
-                                        as Box<dyn TokenStream>,
+                                        as Box<dyn Iterator<Item = Token>>,
                                     total_offset,
                                 ));
                                 if let Some(last_token) = tok_str.tokens.last() {
                                     total_offset += last_token.offset_to;
                                 }
                             }
-                            Value::Str(ref text) => {
+                            Value::Str(text) => {
                                 if let Some(ref mut tokenizer) =
                                     self.tokenizers[field.field_id() as usize]
                                 {
@@ -204,7 +204,7 @@ impl SegmentWriter {
                     let num_tokens = if streams_with_offsets.is_empty() {
                         0
                     } else {
-                        let mut token_stream = TokenStreamChain::new(streams_with_offsets);
+                        let mut token_stream = DynTokenStreamChain::from_vec(streams_with_offsets);
                         multifield_postings.index_text(
                             doc_id,
                             field,
@@ -215,71 +215,62 @@ impl SegmentWriter {
 
                     self.fieldnorms_writer.record(doc_id, field, num_tokens);
                 }
-                FieldType::U64(ref int_option) => {
-                    if int_option.is_indexed() {
-                        for field_value in field_values {
-                            term_buffer.set_field(field_value.field());
-                            let u64_val = field_value
-                                .value()
-                                .u64_value()
-                                .ok_or_else(make_schema_error)?;
-                            term_buffer.set_u64(u64_val);
-                            multifield_postings.subscribe(doc_id, &term_buffer);
-                        }
+                FieldType::U64(int_option) if int_option.is_indexed() => {
+                    for field_value in field_values {
+                        term_buffer.set_field(field_value.field());
+                        let u64_val = field_value
+                            .value()
+                            .u64_value()
+                            .ok_or_else(make_schema_error)?;
+                        term_buffer.set_u64(u64_val);
+                        multifield_postings.subscribe(doc_id, &term_buffer);
                     }
                 }
-                FieldType::Date(ref int_option) => {
-                    if int_option.is_indexed() {
-                        for field_value in field_values {
-                            term_buffer.set_field(field_value.field());
-                            let date_val = field_value
-                                .value()
-                                .date_value()
-                                .ok_or_else(make_schema_error)?;
-                            term_buffer.set_i64(date_val.timestamp());
-                            multifield_postings.subscribe(doc_id, &term_buffer);
-                        }
+                FieldType::Date(int_option) if int_option.is_indexed() => {
+                    for field_value in field_values {
+                        term_buffer.set_field(field_value.field());
+                        let date_val = field_value
+                            .value()
+                            .date_value()
+                            .ok_or_else(make_schema_error)?;
+                        term_buffer.set_i64(date_val.timestamp());
+                        multifield_postings.subscribe(doc_id, &term_buffer);
                     }
                 }
-                FieldType::I64(ref int_option) => {
-                    if int_option.is_indexed() {
-                        for field_value in field_values {
-                            term_buffer.set_field(field_value.field());
-                            let i64_val = field_value
-                                .value()
-                                .i64_value()
-                                .ok_or_else(make_schema_error)?;
-                            term_buffer.set_i64(i64_val);
-                            multifield_postings.subscribe(doc_id, &term_buffer);
-                        }
+                FieldType::I64(int_option) if int_option.is_indexed() => {
+                    for field_value in field_values {
+                        term_buffer.set_field(field_value.field());
+                        let i64_val = field_value
+                            .value()
+                            .i64_value()
+                            .ok_or_else(make_schema_error)?;
+                        term_buffer.set_i64(i64_val);
+                        multifield_postings.subscribe(doc_id, &term_buffer);
                     }
                 }
-                FieldType::F64(ref int_option) => {
-                    if int_option.is_indexed() {
-                        for field_value in field_values {
-                            term_buffer.set_field(field_value.field());
-                            let f64_val = field_value
-                                .value()
-                                .f64_value()
-                                .ok_or_else(make_schema_error)?;
-                            term_buffer.set_f64(f64_val);
-                            multifield_postings.subscribe(doc_id, &term_buffer);
-                        }
+                FieldType::F64(int_option) if int_option.is_indexed() => {
+                    for field_value in field_values {
+                        term_buffer.set_field(field_value.field());
+                        let f64_val = field_value
+                            .value()
+                            .f64_value()
+                            .ok_or_else(make_schema_error)?;
+                        term_buffer.set_f64(f64_val);
+                        multifield_postings.subscribe(doc_id, &term_buffer);
                     }
                 }
-                FieldType::Bytes(ref option) => {
-                    if option.is_indexed() {
-                        for field_value in field_values {
-                            term_buffer.set_field(field_value.field());
-                            let bytes = field_value
-                                .value()
-                                .bytes_value()
-                                .ok_or_else(make_schema_error)?;
-                            term_buffer.set_bytes(bytes);
-                            self.multifield_postings.subscribe(doc_id, &term_buffer);
-                        }
+                FieldType::Bytes(option) if option.is_indexed() => {
+                    for field_value in field_values {
+                        term_buffer.set_field(field_value.field());
+                        let bytes = field_value
+                            .value()
+                            .bytes_value()
+                            .ok_or_else(make_schema_error)?;
+                        term_buffer.set_bytes(bytes);
+                        self.multifield_postings.subscribe(doc_id, &term_buffer);
                     }
                 }
+                _ => {}
             }
         }
         doc.filter_fields(|field| schema.get_field_entry(field).is_stored());

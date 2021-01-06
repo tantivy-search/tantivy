@@ -2,15 +2,15 @@
 //! ```rust
 //! use tantivy::tokenizer::*;
 //!
-//! let tokenizer = TextAnalyzer::from(SimpleTokenizer)
-//!   .filter(StopWordFilter::remove(vec!["the".to_string(), "is".to_string()]));
+//! let tokenizer = analyzer_builder(SimpleTokenizer)
+//!   .filter(StopWordFilter::remove(vec!["the".to_string(), "is".to_string()])).build();
 //!
 //! let mut stream = tokenizer.token_stream("the fox is crafty");
 //! assert_eq!(stream.next().unwrap().text, "fox");
 //! assert_eq!(stream.next().unwrap().text, "crafty");
 //! assert!(stream.next().is_none());
 //! ```
-use super::{Token, TokenFilter, TokenStream};
+use super::{Token, TokenFilter};
 use fnv::FnvHasher;
 use std::collections::HashSet;
 use std::hash::BuildHasherDefault;
@@ -48,42 +48,12 @@ impl StopWordFilter {
     }
 }
 
-pub struct StopWordFilterStream<'a> {
-    words: StopWordHashSet,
-    tail: Box<dyn TokenStream + 'a>,
-}
-
 impl TokenFilter for StopWordFilter {
-    fn transform<'a>(&self, token_stream: Box<dyn TokenStream + 'a>) -> Box<dyn TokenStream + 'a> {
-        Box::new(StopWordFilterStream {
-            words: self.words.clone(),
-            tail: token_stream,
-        })
-    }
-}
-
-impl<'a> StopWordFilterStream<'a> {
-    fn predicate(&self, token: &Token) -> bool {
-        !self.words.contains(&token.text)
-    }
-}
-
-impl<'a> TokenStream for StopWordFilterStream<'a> {
-    fn advance(&mut self) -> bool {
-        while self.tail.advance() {
-            if self.predicate(self.tail.token()) {
-                return true;
-            }
+    fn transform(&mut self, token: Token) -> Option<Token> {
+        if self.words.contains(&token.text) {
+            return None;
         }
-        false
-    }
-
-    fn token(&self) -> &Token {
-        self.tail.token()
-    }
-
-    fn token_mut(&mut self) -> &mut Token {
-        self.tail.token_mut()
+        Some(token)
     }
 }
 

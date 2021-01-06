@@ -1,4 +1,4 @@
-use super::{Token, TokenFilter, TokenStream};
+use super::{Token, TokenFilter};
 use rust_stemmers::{self, Algorithm};
 use serde::{Deserialize, Serialize};
 
@@ -57,15 +57,14 @@ impl Language {
 /// Tokens are expected to be lowercased beforehand.
 #[derive(Clone)]
 pub struct Stemmer {
-    stemmer_algorithm: Algorithm,
+    stemmer: rust_stemmers::Stemmer,
 }
 
 impl Stemmer {
     /// Creates a new Stemmer `TokenFilter` for a given language algorithm.
     pub fn new(language: Language) -> Stemmer {
-        Stemmer {
-            stemmer_algorithm: language.algorithm(),
-        }
+        let stemmer = rust_stemmers::Stemmer::create(language.algorithm());
+        Stemmer { stemmer }
     }
 }
 
@@ -77,37 +76,12 @@ impl Default for Stemmer {
 }
 
 impl TokenFilter for Stemmer {
-    fn transform<'a>(&self, token_stream: Box<dyn TokenStream + 'a>) -> Box<dyn TokenStream + 'a> {
-        let inner_stemmer = rust_stemmers::Stemmer::create(self.stemmer_algorithm);
-        Box::new(StemmerTokenStream {
-            tail: token_stream,
-            stemmer: inner_stemmer,
-        })
-    }
-}
-
-pub struct StemmerTokenStream<'a> {
-    tail: Box<dyn TokenStream + 'a>,
-    stemmer: rust_stemmers::Stemmer,
-}
-
-impl<'a> TokenStream for StemmerTokenStream<'a> {
-    fn advance(&mut self) -> bool {
-        if !self.tail.advance() {
-            return false;
-        }
+    fn transform(&mut self, mut token: Token) -> Option<Token> {
         // TODO remove allocation
-        let stemmed_str: String = self.stemmer.stem(&self.token().text).into_owned();
-        self.token_mut().text.clear();
-        self.token_mut().text.push_str(&stemmed_str);
-        true
-    }
-
-    fn token(&self) -> &Token {
-        self.tail.token()
-    }
-
-    fn token_mut(&mut self) -> &mut Token {
-        self.tail.token_mut()
+        let stemmed_str: String = self.stemmer.stem(&token.text).into_owned();
+        // TODO remove clear
+        token.text.clear();
+        token.text.push_str(&stemmed_str);
+        Some(token)
     }
 }

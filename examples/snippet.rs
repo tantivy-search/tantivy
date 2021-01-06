@@ -51,7 +51,7 @@ fn main() -> tantivy::Result<()> {
 
     let top_docs = searcher.search(&query, &TopDocs::with_limit(10))?;
 
-    let snippet_generator = SnippetGenerator::create(&searcher, &*query, body)?;
+    let mut snippet_generator = SnippetGenerator::create(&searcher, &*query, body)?;
 
     for (score, doc_address) in top_docs {
         let doc = searcher.doc(doc_address)?;

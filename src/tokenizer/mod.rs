@@ -64,10 +64,10 @@
 //! ```rust
 //! use tantivy::tokenizer::*;
 //!
-//! let en_stem = TextAnalyzer::from(SimpleTokenizer)
+//! let en_stem = analyzer_builder(SimpleTokenizer)
 //!     .filter(RemoveLongFilter::limit(40))
-//!     .filter(LowerCaser)
-//!     .filter(Stemmer::new(Language::English));
+//!     .filter(LowerCaser::new())
+//!     .filter(Stemmer::new(Language::English)).build();
 //! ```
 //!
 //! Once your tokenizer is defined, you need to
@@ -109,9 +109,9 @@
 //! let index = Index::create_in_ram(schema);
 //!
 //! // We need to register our tokenizer :
-//! let custom_en_tokenizer = TextAnalyzer::from(SimpleTokenizer)
+//! let custom_en_tokenizer = analyzer_builder(SimpleTokenizer)
 //!     .filter(RemoveLongFilter::limit(40))
-//!     .filter(LowerCaser);
+//!     .filter(LowerCaser::new()).build();
 //! index
 //!     .tokenizers()
 //!     .register("custom_en", custom_en_tokenizer);
@@ -133,7 +133,7 @@ mod tokenizer;
 mod tokenizer_manager;
 
 pub use self::alphanum_only::AlphaNumOnlyFilter;
-pub use self::ascii_folding_filter::AsciiFoldingFilter;
+pub use self::ascii_folding_filter::AsciiFolding;
 pub use self::facet_tokenizer::FacetTokenizer;
 pub use self::lower_caser::LowerCaser;
 pub use self::ngram_tokenizer::NgramTokenizer;
@@ -142,10 +142,12 @@ pub use self::remove_long::RemoveLongFilter;
 pub use self::simple_tokenizer::SimpleTokenizer;
 pub use self::stemmer::{Language, Stemmer};
 pub use self::stop_word_filter::StopWordFilter;
-pub(crate) use self::token_stream_chain::TokenStreamChain;
+pub(crate) use self::token_stream_chain::{DynTokenStreamChain, TokenStreamChain};
 
 pub use self::tokenized_string::{PreTokenizedStream, PreTokenizedString};
-pub use self::tokenizer::{TextAnalyzer, Token, TokenFilter, TokenStream, Tokenizer};
+pub use self::tokenizer::{
+    analyzer_builder, Identity, TextAnalyzer, TextAnalyzerT, Token, TokenFilter, Tokenizer,
+};
 
 pub use self::tokenizer_manager::TokenizerManager;
 
@@ -158,10 +160,7 @@ pub const MAX_TOKEN_LEN: usize = u16::max_value() as usize - 4;
 
 #[cfg(test)]
 pub mod tests {
-    use super::{
-        Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, Token, TokenizerManager,
-    };
-    use crate::tokenizer::TextAnalyzer;
+    use super::*;
 
     /// This is a function that can be used in tests and doc tests
     /// to assert a token's correctness.
@@ -188,15 +187,9 @@ pub mod tests {
     fn test_raw_tokenizer() {
         let tokenizer_manager = TokenizerManager::default();
         let en_tokenizer = tokenizer_manager.get("raw").unwrap();
-        let mut tokens: Vec<Token> = vec![];
-        {
-            let mut add_token = |token: &Token| {
-                tokens.push(token.clone());
-            };
-            en_tokenizer
-                .token_stream("Hello, happy tax payer!")
-                .process(&mut add_token);
-        }
+        let tokens: Vec<Token> = en_tokenizer
+            .token_stream("Hello, happy tax payer!")
+            .collect();
         assert_eq!(tokens.len(), 1);
         assert_token(&tokens[0], 0, "Hello, happy tax payer!", 0, 23);
     }
@@ -206,15 +199,9 @@ pub mod tests {
         let tokenizer_manager = TokenizerManager::default();
         assert!(tokenizer_manager.get("en_doesnotexist").is_none());
         let en_tokenizer = tokenizer_manager.get("en_stem").unwrap();
-        let mut tokens: Vec<Token> = vec![];
-        {
-            let mut add_token = |token: &Token| {
-                tokens.push(token.clone());
-            };
-            en_tokenizer
-                .token_stream("Hello, happy tax payer!")
-                .process(&mut add_token);
-        }
+        let tokens: Vec<Token> = en_tokenizer
+            .token_stream("Hello, happy tax payer!")
+            .collect();
 
         assert_eq!(tokens.len(), 4);
         assert_token(&tokens[0], 0, "hello", 0, 5);
@@ -228,21 +215,16 @@ pub mod tests {
         let tokenizer_manager = TokenizerManager::default();
         tokenizer_manager.register(
             "el_stem",
-            TextAnalyzer::from(SimpleTokenizer)
+            analyzer_builder(SimpleTokenizer)
                 .filter(RemoveLongFilter::limit(40))
-                .filter(LowerCaser)
-                .filter(Stemmer::new(Language::Greek)),
+                .filter(LowerCaser::new())
+                .filter(Stemmer::new(Language::Greek))
+                .build(),
         );
         let en_tokenizer = tokenizer_manager.get("el_stem").unwrap();
-        let mut tokens: Vec<Token> = vec![];
-        {
-            let mut add_token = |token: &Token| {
-                tokens.push(token.clone());
-            };
-            en_tokenizer
-                .token_stream("Καλημέρα, χαρούμενε φορολογούμενε!")
-                .process(&mut add_token);
-        }
+        let tokens: Vec<Token> = en_tokenizer
+            .token_stream("Καλημέρα, χαρούμενε φορολογούμενε!")
+            .collect();
 
         assert_eq!(tokens.len(), 3);
         assert_token(&tokens[0], 0, "καλημερ", 0, 16);
@@ -254,25 +236,9 @@ pub mod tests {
     fn test_tokenizer_empty() {
         let tokenizer_manager = TokenizerManager::default();
         let en_tokenizer = tokenizer_manager.get("en_stem").unwrap();
-        {
-            let mut tokens: Vec<Token> = vec![];
-            {
-                let mut add_token = |token: &Token| {
-                    tokens.push(token.clone());
-                };
-                en_tokenizer.token_stream(" ").process(&mut add_token);
-            }
-            assert!(tokens.is_empty());
-        }
-        {
-            let mut tokens: Vec<Token> = vec![];
-            {
-                let mut add_token = |token: &Token| {
-                    tokens.push(token.clone());
-                };
-                en_tokenizer.token_stream(" ").process(&mut add_token);
-            }
-            assert!(tokens.is_empty());
-        }
+        let tokens: Vec<Token> = en_tokenizer.token_stream(" ").collect();
+        assert!(tokens.is_empty());
+        let tokens: Vec<Token> = en_tokenizer.token_stream(" ").collect();
+        assert!(tokens.is_empty());
     }
 }

@@ -17,12 +17,7 @@ use tantivy::{doc, Index, ReloadPolicy};
 use tempfile::TempDir;
 
 fn pre_tokenize_text(text: &str) -> Vec<Token> {
-    let mut token_stream = SimpleTokenizer.token_stream(text);
-    let mut tokens = vec![];
-    while token_stream.advance() {
-        tokens.push(token_stream.token().clone());
-    }
-    tokens
+    SimpleTokenizer.token_stream(text).collect()
 }
 
 fn main() -> tantivy::Result<()> {

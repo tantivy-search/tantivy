@@ -9,7 +9,6 @@ use crate::postings::{FieldSerializer, InvertedIndexSerializer};
 use crate::schema::IndexRecordOption;
 use crate::schema::{Field, FieldEntry, FieldType, Schema, Term};
 use crate::termdict::TermOrdinal;
-use crate::tokenizer::TokenStream;
 use crate::tokenizer::{Token, MAX_TOKEN_LEN};
 use crate::DocId;
 use fnv::FnvHashMap;
@@ -100,12 +99,10 @@ impl MultiFieldPostingsWriter {
         &mut self,
         doc: DocId,
         field: Field,
-        token_stream: &mut dyn TokenStream,
+        token_stream: &mut dyn Iterator<Item = Token>,
         term_buffer: &mut Term,
     ) -> u32 {
-        let postings_writer =
-            self.per_field_postings_writers[field.field_id() as usize].deref_mut();
-        postings_writer.index_text(
+        self.per_field_postings_writers[field.field_id() as usize].index_text(
             &mut self.term_index,
             doc,
             field,
@@ -217,7 +214,7 @@ pub trait PostingsWriter {
         term_index: &mut TermHashMap,
         doc_id: DocId,
         field: Field,
-        token_stream: &mut dyn TokenStream,
+        token_stream: &mut dyn Iterator<Item = Token>,
         heap: &mut MemoryArena,
         term_buffer: &mut Term,
     ) -> u32 {
@@ -242,7 +239,7 @@ pub trait PostingsWriter {
                 );
             }
         };
-        token_stream.process(&mut sink)
+        token_stream.map(|tok| sink(&tok)).count() as u32
     }
 
     fn total_num_tokens(&self) -> u64;
