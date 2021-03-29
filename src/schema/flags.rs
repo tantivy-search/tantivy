@@ -31,6 +31,18 @@ pub const INDEXED: SchemaFlagList<IndexedFlag, ()> = SchemaFlagList {
 };
 
 #[derive(Clone)]
+pub struct NormedFlag;
+/// Flag to mark the field as indexed.
+///
+/// The `INDEXED` flag can only be used when building `IntOptions` (`u64`, `i64` and `f64` fields)
+/// Of course, text fields can also be indexed... But this is expressed by using either the
+/// `STRING` (untokenized) or `TEXT` (tokenized with the english tokenizer) flags.
+pub const NORMED: SchemaFlagList<NormedFlag, ()> = SchemaFlagList {
+    head: NormedFlag,
+    tail: (),
+};
+
+#[derive(Clone)]
 pub struct FastFlag;
 /// Flag to mark the field as a fast field (similar to Lucene's DocValues)
 ///

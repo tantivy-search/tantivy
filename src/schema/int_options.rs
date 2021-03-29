@@ -2,6 +2,8 @@ use crate::schema::flags::{FastFlag, IndexedFlag, SchemaFlagList, StoredFlag};
 use serde::{Deserialize, Serialize};
 use std::ops::BitOr;
 
+use super::flags::NormedFlag;
+
 /// Express whether a field is single-value or multi-valued.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Cardinality {
@@ -18,6 +20,7 @@ pub enum Cardinality {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntOptions {
     indexed: bool,
+    normed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     fast: Option<Cardinality>,
     stored: bool,
@@ -32,6 +35,11 @@ impl IntOptions {
     /// Returns true iff the value is indexed.
     pub fn is_indexed(&self) -> bool {
         self.indexed
+    }
+
+    /// Returns true iff the value is normed.
+    pub fn is_normed(&self) -> bool {
+        self.normed
     }
 
     /// Returns true iff the value is a fast field.
@@ -54,6 +62,15 @@ impl IntOptions {
     /// a posting list for each value taken by the integer.
     pub fn set_indexed(mut self) -> IntOptions {
         self.indexed = true;
+        self
+    }
+
+    /// Set the field as normed.
+    ///
+    /// Setting an integer as normed will generate
+    /// the fieldnorm data for it.
+    pub fn set_normed(mut self) -> IntOptions {
+        self.normed = true;
         self
     }
 
@@ -81,6 +98,7 @@ impl Default for IntOptions {
     fn default() -> IntOptions {
         IntOptions {
             indexed: false,
+            normed: false,
             stored: false,
             fast: None,
         }
@@ -97,6 +115,7 @@ impl From<FastFlag> for IntOptions {
     fn from(_: FastFlag) -> Self {
         IntOptions {
             indexed: false,
+            normed: false,
             stored: false,
             fast: Some(Cardinality::SingleValue),
         }
@@ -107,6 +126,7 @@ impl From<StoredFlag> for IntOptions {
     fn from(_: StoredFlag) -> Self {
         IntOptions {
             indexed: false,
+            normed: false,
             stored: true,
             fast: None,
         }
@@ -117,6 +137,18 @@ impl From<IndexedFlag> for IntOptions {
     fn from(_: IndexedFlag) -> Self {
         IntOptions {
             indexed: true,
+            normed: false,
+            stored: false,
+            fast: None,
+        }
+    }
+}
+
+impl From<NormedFlag> for IntOptions {
+    fn from(_: NormedFlag) -> Self {
+        IntOptions {
+            indexed: false,
+            normed: true,
             stored: false,
             fast: None,
         }
@@ -130,6 +162,7 @@ impl<T: Into<IntOptions>> BitOr<T> for IntOptions {
         let other = other.into();
         IntOptions {
             indexed: self.indexed | other.indexed,
+            normed: self.normed | other.normed,
             stored: self.stored | other.stored,
             fast: self.fast.or(other.fast),
         }

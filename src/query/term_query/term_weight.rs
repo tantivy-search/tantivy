@@ -107,7 +107,9 @@ impl TermWeight {
         let field = self.term.field();
         let inverted_index = reader.inverted_index(field)?;
         let fieldnorm_reader = if self.scoring_enabled {
-            reader.get_fieldnorms_reader(field)?
+            reader
+                .get_fieldnorms_reader(field)
+                .unwrap_or(FieldNormReader::constant(reader.max_doc(), 1))
         } else {
             FieldNormReader::constant(reader.max_doc(), 1)
         };

@@ -113,6 +113,11 @@ impl FieldEntry {
         }
     }
 
+    /// Returns true iff the field is normed
+    pub fn is_normed(&self) -> bool {
+        self.field_type.is_normed()
+    }
+
     /// Returns true iff the field is a int (signed or unsigned) fast field
     pub fn is_fast(&self) -> bool {
         match self.field_type {
