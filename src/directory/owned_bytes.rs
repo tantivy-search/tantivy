@@ -63,6 +63,12 @@ impl OwnedBytes {
     }
 
     /// Splits the OwnedBytes into two OwnedBytes `(left, right)`.
+    pub fn split_from_end(self, right_len: usize) -> (OwnedBytes, OwnedBytes) {
+        let left_len = self.len() - right_len;
+        self.split(left_len)
+    }
+
+    /// Splits the OwnedBytes into two OwnedBytes `(left, right)`.
     ///
     /// Left will hold `split_len` bytes.
     ///

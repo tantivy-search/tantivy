@@ -108,6 +108,7 @@ static EMPTY_TERM_DICT_FILE: Lazy<FileSlice> = Lazy::new(|| {
 /// possible to fetch the associated `TermInfo`.
 pub struct TermDictionary {
     fst_index: tantivy_fst::Map<OwnedBytes>,
+    term_info_store_bytes: OwnedBytes,
     term_info_store: TermInfoStore,
 }
 
@@ -119,10 +120,12 @@ impl TermDictionary {
         let footer_size = u64::deserialize(&mut footer_len_bytes)?;
         let (fst_file_slice, values_file_slice) = main_slice.split_from_end(footer_size as usize);
         let fst_index = open_fst_index(fst_file_slice)?;
-        let term_info_store = TermInfoStore::open(values_file_slice)?;
+        let term_info_store_bytes = values_file_slice.read_bytes()?;
+        let term_info_store = TermInfoStore::open(term_info_store_bytes.as_slice())?;
         Ok(TermDictionary {
             fst_index,
             term_info_store,
+            term_info_store_bytes,
         })
     }
 
@@ -174,7 +177,8 @@ impl TermDictionary {
 
     /// Returns the number of terms in the dictionary.
     pub fn term_info_from_ord(&self, term_ord: TermOrdinal) -> TermInfo {
-        self.term_info_store.get(term_ord)
+        self.term_info_store
+            .get(term_ord, self.term_info_store_bytes.as_slice())
     }
 
     /// Lookups the value corresponding to the key.
