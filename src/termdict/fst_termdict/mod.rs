@@ -23,5 +23,7 @@ mod streamer;
 mod term_info_store;
 mod termdict;
 
-pub use self::streamer::{TermStreamer, TermStreamerBuilder};
+pub use self::streamer::{
+    TermStreamer, TermStreamerBuilder, TermWithStateStreamer, TermWithStateStreamerBuilder,
+};
 pub use self::termdict::{TermDictionary, TermDictionaryBuilder};

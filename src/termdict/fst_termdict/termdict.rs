@@ -1,5 +1,5 @@
 use super::term_info_store::{TermInfoStore, TermInfoStoreWriter};
-use super::{TermStreamer, TermStreamerBuilder};
+use super::{TermStreamer, TermStreamerBuilder, TermWithStateStreamerBuilder};
 use crate::common::{BinarySerializable, CountingWriter};
 use crate::directory::{FileSlice, OwnedBytes};
 use crate::error::DataCorruption;
@@ -200,5 +200,16 @@ impl TermDictionary {
     pub fn search<'a, A: Automaton + 'a>(&'a self, automaton: A) -> TermStreamerBuilder<'a, A> {
         let stream_builder = self.fst_index.search(automaton);
         TermStreamerBuilder::<A>::new(self, stream_builder)
+    }
+
+    /// Returns a search builder, to stream all of the terms
+    /// within the Automaton
+    pub fn search_with_state<'a, A>(&'a self, automaton: A) -> TermWithStateStreamerBuilder<'a, A>
+    where
+        A: Automaton + 'a,
+        A::State: Clone,
+    {
+        let stream_builder = self.fst_index.search(automaton);
+        TermWithStateStreamerBuilder::<A>::new(self, stream_builder)
     }
 }

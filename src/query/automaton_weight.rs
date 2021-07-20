@@ -1,12 +1,14 @@
-use crate::common::BitSet;
 use crate::core::SegmentReader;
-use crate::query::ConstScorer;
-use crate::query::{BitSetDocSet, Explanation};
+use crate::query::fuzzy_query::DFAWrapper;
+use crate::query::score_combiner::SumCombiner;
+use crate::query::Explanation;
+use crate::query::{ConstScorer, Union};
 use crate::query::{Scorer, Weight};
 use crate::schema::{Field, IndexRecordOption};
-use crate::termdict::{TermDictionary, TermStreamer};
+use crate::termdict::{TermDictionary, TermWithStateStreamer};
 use crate::TantivyError;
 use crate::{DocId, Score};
+use std::any::{Any, TypeId};
 use std::io;
 use std::sync::Arc;
 use tantivy_fst::Automaton;
@@ -33,9 +35,9 @@ where
     fn automaton_stream<'a>(
         &'a self,
         term_dict: &'a TermDictionary,
-    ) -> io::Result<TermStreamer<'a, &'a A>> {
+    ) -> io::Result<TermWithStateStreamer<'a, &'a A>> {
         let automaton: &A = &*self.automaton;
-        let term_stream_builder = term_dict.search(automaton);
+        let term_stream_builder = term_dict.search_with_state(automaton);
         term_stream_builder.into_stream()
     }
 }
@@ -46,40 +48,51 @@ where
     A::State: Clone,
 {
     fn scorer(&self, reader: &SegmentReader, boost: Score) -> crate::Result<Box<dyn Scorer>> {
-        let max_doc = reader.max_doc();
-        let mut doc_bitset = BitSet::with_max_value(max_doc);
         let inverted_index = reader.inverted_index(self.field)?;
         let term_dict = inverted_index.terms();
         let mut term_stream = self.automaton_stream(term_dict)?;
-        while term_stream.advance() {
-            let term_info = term_stream.value();
-            let mut block_segment_postings = inverted_index
-                .read_block_postings_from_terminfo(term_info, IndexRecordOption::Basic)?;
-            loop {
-                let docs = block_segment_postings.docs();
-                if docs.is_empty() {
-                    break;
-                }
-                for &doc in docs {
-                    doc_bitset.insert(doc);
-                }
-                block_segment_postings.advance();
-            }
+
+        let mut scorers = vec![];
+        while let Some((_term, term_info, state)) = term_stream.next() {
+            let score = automaton_score(self.automaton.as_ref(), state);
+            let segment_postings =
+                inverted_index.read_postings_from_terminfo(term_info, IndexRecordOption::Basic)?;
+            let scorer = ConstScorer::new(segment_postings, boost * score);
+            scorers.push(scorer);
         }
-        let doc_bitset = BitSetDocSet::from(doc_bitset);
-        let const_scorer = ConstScorer::new(doc_bitset, boost);
-        Ok(Box::new(const_scorer))
+
+        let scorer = Union::<_, SumCombiner>::from(scorers);
+        Ok(Box::new(scorer))
     }
 
     fn explain(&self, reader: &SegmentReader, doc: DocId) -> crate::Result<Explanation> {
         let mut scorer = self.scorer(reader, 1.0)?;
         if scorer.seek(doc) == doc {
-            Ok(Explanation::new("AutomatonScorer", 1.0))
+            Ok(Explanation::new("AutomatonScorer", scorer.score()))
         } else {
             Err(TantivyError::InvalidArgument(
                 "Document does not exist".to_string(),
             ))
         }
+    }
+}
+
+fn automaton_score<A>(automaton: &A, state: A::State) -> f32
+where
+    A: Automaton + Send + Sync + 'static,
+    A::State: Clone,
+{
+    if TypeId::of::<DFAWrapper>() == automaton.type_id() && TypeId::of::<u32>() == state.type_id() {
+        let dfa = automaton as *const A as *const DFAWrapper;
+        let dfa = unsafe { &*dfa };
+
+        let id = &state as *const A::State as *const u32;
+        let id = unsafe { *id };
+
+        let dist = dfa.0.distance(id).to_u8() as f32;
+        1.0 / (1.0 + dist)
+    } else {
+        1.0
     }
 }
 

@@ -199,7 +199,7 @@ mod test {
                 .unwrap();
             assert_eq!(top_docs.len(), 1, "Expected only 1 document");
             let (score, _) = top_docs[0];
-            assert_nearly_equals!(1.0, score);
+            assert_nearly_equals!(0.5, score);
         }
 
         // fails because non-prefix Levenshtein distance is more than 1 (add 'a' and 'n')

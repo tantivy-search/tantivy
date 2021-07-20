@@ -54,3 +54,7 @@ pub type TermMerger<'a> = self::merger::TermMerger<'a>;
 /// `TermStreamer` acts as a cursor over a range of terms of a segment.
 /// Terms are guaranteed to be sorted.
 pub type TermStreamer<'a, A = AlwaysMatch> = self::termdict::TermStreamer<'a, A>;
+
+/// `TermWithStateStreamer` acts as a cursor over a range of terms of a segment.
+/// Terms are guaranteed to be sorted.
+pub type TermWithStateStreamer<'a, A = AlwaysMatch> = self::termdict::TermWithStateStreamer<'a, A>;
