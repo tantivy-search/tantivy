@@ -16,6 +16,7 @@ pub struct PhraseWeight {
     phrase_terms: Vec<(usize, Term)>,
     similarity_weight: Bm25Weight,
     scoring_enabled: bool,
+    slop: u32,
 }
 
 impl PhraseWeight {
@@ -25,10 +26,12 @@ impl PhraseWeight {
         similarity_weight: Bm25Weight,
         scoring_enabled: bool,
     ) -> PhraseWeight {
+        let slop = 0;
         PhraseWeight {
             phrase_terms,
             similarity_weight,
             scoring_enabled,
+            slop,
         }
     }
 
@@ -77,7 +80,12 @@ impl PhraseWeight {
             similarity_weight,
             fieldnorm_reader,
             self.scoring_enabled,
+            self.slop,
         )))
+    }
+
+    pub fn slop(&mut self, slop: u32) {
+        self.slop = slop;
     }
 }
 

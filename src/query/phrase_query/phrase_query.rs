@@ -26,6 +26,7 @@ use crate::schema::{Field, Term};
 pub struct PhraseQuery {
     field: Field,
     phrase_terms: Vec<(usize, Term)>,
+    slop: u32,
 }
 
 impl PhraseQuery {
@@ -56,7 +57,13 @@ impl PhraseQuery {
         PhraseQuery {
             field,
             phrase_terms: terms,
+            slop: 0,
         }
+    }
+
+    /// Slop allowed for the phrase.
+    pub fn slop(&mut self, value: u32) {
+        self.slop = value;
     }
 
     /// The `Field` this `PhraseQuery` is targeting.
@@ -97,11 +104,11 @@ impl PhraseQuery {
         }
         let terms = self.phrase_terms();
         let bm25_weight = Bm25Weight::for_terms(searcher, &terms)?;
-        Ok(PhraseWeight::new(
-            self.phrase_terms.clone(),
-            bm25_weight,
-            scoring_enabled,
-        ))
+        let mut weight = PhraseWeight::new(self.phrase_terms.clone(), bm25_weight, scoring_enabled);
+        if self.slop > 0 {
+            weight.slop(self.slop);
+        }
+        Ok(weight)
     }
 }
 
