@@ -288,7 +288,7 @@ mod test {
     use crate::core::Index;
     use crate::schema::Field;
     use crate::schema::Schema;
-    use crate::schema::{FAST, INDEXED, STORED, TEXT};
+    use crate::schema::{FAST, INDEXED, NORMED, STORED, TEXT};
     use crate::space_usage::ByteCount;
     use crate::space_usage::PerFieldSpaceUsage;
     use crate::Term;
@@ -323,7 +323,7 @@ mod test {
     #[test]
     fn test_fast_indexed() {
         let mut schema_builder = Schema::builder();
-        let name = schema_builder.add_u64_field("name", FAST | INDEXED);
+        let name = schema_builder.add_u64_field("name", FAST | INDEXED | NORMED);
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
 
@@ -437,7 +437,7 @@ mod test {
     #[test]
     fn test_deletes() -> crate::Result<()> {
         let mut schema_builder = Schema::builder();
-        let name = schema_builder.add_u64_field("name", INDEXED);
+        let name = schema_builder.add_u64_field("name", INDEXED | NORMED);
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
 

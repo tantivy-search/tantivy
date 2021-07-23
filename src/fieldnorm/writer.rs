@@ -23,7 +23,7 @@ impl FieldNormsWriter {
         schema
             .fields()
             .filter_map(|(field, field_entry)| {
-                if field_entry.is_indexed() {
+                if field_entry.is_indexed() && field_entry.is_normed() {
                     Some(field)
                 } else {
                     None

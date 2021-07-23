@@ -47,7 +47,7 @@ mod tests {
 
     use crate::directory::OwnedBytes;
     use crate::indexer::NoMergePolicy;
-    use crate::schema::{SchemaBuilder, STORED, STRING};
+    use crate::schema::{SchemaBuilder, STORED, TEXT};
     use crate::store::index::Checkpoint;
     use crate::{DocAddress, DocId, Index, Term};
 
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn test_merge_store_with_stacking_reproducing_issue969() -> crate::Result<()> {
         let mut schema_builder = SchemaBuilder::default();
-        let text = schema_builder.add_text_field("text", STORED | STRING);
+        let text = schema_builder.add_text_field("text", STORED | TEXT);
         let body = schema_builder.add_text_field("body", STORED);
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);

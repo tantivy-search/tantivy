@@ -7,7 +7,7 @@ pub use self::writer::BytesFastFieldWriter;
 #[cfg(test)]
 mod tests {
     use crate::schema::{BytesOptions, IndexRecordOption, Schema, Value};
-    use crate::{query::TermQuery, schema::FAST, schema::INDEXED, schema::STORED};
+    use crate::{query::TermQuery, schema::FAST, schema::INDEXED, schema::NORMED, schema::STORED};
     use crate::{DocAddress, DocSet, Index, Searcher, Term};
     use std::ops::Deref;
 
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn test_index_bytes() -> crate::Result<()> {
-        let searcher = create_index_for_test(INDEXED)?;
+        let searcher = create_index_for_test(INDEXED | NORMED)?;
         assert_eq!(searcher.num_docs(), 1);
         let field = searcher.schema().get_field("string_bytes").unwrap();
         let term = Term::from_field_bytes(field, b"lucene".as_ref());

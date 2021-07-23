@@ -242,7 +242,9 @@ impl SegmentWriter {
                         )
                     };
 
-                    self.fieldnorms_writer.record(doc_id, field, num_tokens);
+                    if field_entry.is_normed() {
+                        self.fieldnorms_writer.record(doc_id, field, num_tokens);
+                    }
                 }
                 FieldType::U64(_) => {
                     for field_value in field_values {

@@ -93,6 +93,22 @@ impl FieldType {
         }
     }
 
+    /// returns true iff the field is normed.
+    pub fn is_normed(&self) -> bool {
+        match *self {
+            FieldType::Str(ref text_options) => text_options.get_indexing_options().map_or_else(
+                || false,
+                |opt| opt.index_option() != IndexRecordOption::Basic,
+            ),
+            FieldType::U64(ref int_options)
+            | FieldType::I64(ref int_options)
+            | FieldType::F64(ref int_options)
+            | FieldType::Date(ref int_options) => int_options.is_normed(),
+            FieldType::HierarchicalFacet(_) => false,
+            FieldType::Bytes(ref bytes_options) => bytes_options.is_normed(),
+        }
+    }
+
     /// Given a field configuration, return the maximal possible
     /// `IndexRecordOption` available.
     ///

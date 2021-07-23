@@ -433,6 +433,7 @@ mod tests {
             .set_fast(Cardinality::SingleValue);
         let score_options = IntOptions::default()
             .set_indexed()
+            .set_normed()
             .set_fast(Cardinality::SingleValue);
         schema_builder.add_text_field("title", TEXT);
         schema_builder.add_text_field("author", STRING);
@@ -469,6 +470,7 @@ mod tests {
     "type": "u64",
     "options": {
       "indexed": false,
+      "normed": false,
       "fast": "single",
       "stored": true
     }
@@ -478,6 +480,7 @@ mod tests {
     "type": "i64",
     "options": {
       "indexed": false,
+      "normed": false,
       "fast": "single",
       "stored": true
     }
@@ -487,6 +490,7 @@ mod tests {
     "type": "f64",
     "options": {
       "indexed": true,
+      "normed": true,
       "fast": "single",
       "stored": false
     }
@@ -752,6 +756,7 @@ mod tests {
         let timestamp_options = IntOptions::default()
             .set_stored()
             .set_indexed()
+            .set_normed()
             .set_fast(SingleValue);
         schema_builder.add_text_field("_id", id_options);
         schema_builder.add_date_field("_timestamp", timestamp_options);
@@ -773,6 +778,7 @@ mod tests {
     "type": "i64",
     "options": {
       "indexed": false,
+      "normed": false,
       "fast": "single",
       "stored": true
     }
@@ -803,6 +809,7 @@ mod tests {
     "type": "date",
     "options": {
       "indexed": true,
+      "normed": true,
       "fast": "single",
       "stored": true
     }
@@ -823,6 +830,7 @@ mod tests {
     "type": "i64",
     "options": {
       "indexed": false,
+      "normed": false,
       "fast": "single",
       "stored": true
     }

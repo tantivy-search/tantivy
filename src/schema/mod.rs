@@ -147,7 +147,7 @@ pub use self::text_options::STRING;
 pub use self::text_options::TEXT;
 
 pub use self::bytes_options::BytesOptions;
-pub use self::flags::{FAST, INDEXED, STORED};
+pub use self::flags::{FAST, INDEXED, NORMED, STORED};
 pub use self::int_options::Cardinality;
 pub use self::int_options::IntOptions;
 
